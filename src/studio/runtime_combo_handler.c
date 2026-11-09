@@ -362,6 +362,15 @@ static bool runtime_combo_rpc_handle_request(const zmk_custom_CallRequest *raw_r
     }
 
     int ret = 0;
+
+    /*
+     * Runtime combo writes trigger Custom Settings change events. The Studio
+     * notification listener handles those synchronously in this RPC thread,
+     * which can delay the RPC response and cause transport timeouts. The
+     * response to this request already reports the result to the Studio client.
+     */
+    zmk_custom_settings_notify_suppress_begin();
+
     switch (req.which_request_type) {
     case cormoran_runtime_combo_Request_list_combos_tag:
         ret = handle_list_combos(resp);
@@ -403,6 +412,8 @@ static bool runtime_combo_rpc_handle_request(const zmk_custom_CallRequest *raw_r
         ret = -ENOTSUP;
         break;
     }
+
+    zmk_custom_settings_notify_suppress_end();
 
     if (ret < 0) {
         set_errno_error(resp, "Runtime combo request", ret);
