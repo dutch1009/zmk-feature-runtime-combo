@@ -185,6 +185,9 @@ static int request_to_combo(const cormoran_runtime_combo_SetComboRequest *req,
                 .behavior_dev = behavior_name,
                 .param1 = req->behavior.param1,
                 .param2 = req->behavior.param2,
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_LOCAL_IDS_IN_BINDINGS)
+                .local_id = req->behavior.behavior_id,
+#endif
             },
         .timeout_ms = req->timeout_ms,
         .require_prior_idle_ms = req->require_prior_idle_ms,
