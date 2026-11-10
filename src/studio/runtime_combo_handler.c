@@ -322,15 +322,65 @@ static int handle_reset_combo(const cormoran_runtime_combo_ResetComboRequest *re
     return 0;
 }
 
+static int save_runtime_combo_array(const char *key, uint32_t *affected_count) {
+    const struct zmk_custom_setting *setting =
+        zmk_custom_setting_find_array(ZMK_RUNTIME_COMBO_SUBSYSTEM_ID, key);
+    if (!setting) {
+        return -ENOENT;
+    }
+
+    /* Saving an array descriptor persists the complete array once. Passing
+     * an element view to the generic save-scope iterator repeats that same
+     * full-array write for every active element, causing quadratic flash I/O. */
+    uint32_t count = zmk_custom_setting_array_size(setting);
+    int ret = zmk_custom_setting_save(setting);
+    if (ret == 0 && affected_count) {
+        *affected_count += count;
+    }
+    return ret;
+}
+
+static int save_runtime_combo_scalar(const char *key, uint32_t *affected_count) {
+    const struct zmk_custom_setting *setting =
+        zmk_custom_setting_find(ZMK_RUNTIME_COMBO_SUBSYSTEM_ID, key);
+    if (!setting) {
+        return -ENOENT;
+    }
+
+    int ret = zmk_custom_setting_save(setting);
+    if (ret == 0 && affected_count) {
+        (*affected_count)++;
+    }
+    return ret;
+}
+
 static int handle_save(cormoran_runtime_combo_Response *resp) {
     uint32_t affected_count = 0;
-    int ret =
-        zmk_custom_settings_save_scope(ZMK_RUNTIME_COMBO_SUBSYSTEM_ID, NULL, NULL, &affected_count);
-    /* save_scope() doesn't itself change any in-memory value, but the
-     * decoded-combo cache is rebuilt here too for the same reason as
-     * discard: neither operation runs through
-     * zmk_runtime_combo_write()/reset(), so the cache would otherwise never
-     * learn about it. */
+    int ret;
+
+    /* Persist each parallel combo array once, rather than invoking the
+     * generic save-scope array-element expansion (which saves the entire
+     * array once per element). */
+    ret = save_runtime_combo_array(ZMK_RUNTIME_COMBO_COMBOS_KEY, &affected_count);
+    if (ret == 0) {
+        ret = save_runtime_combo_array(ZMK_RUNTIME_COMBO_BEHAVIORS_KEY, &affected_count);
+    }
+    if (ret == 0) {
+        ret = save_runtime_combo_array(ZMK_RUNTIME_COMBO_NAMES_KEY, &affected_count);
+    }
+    if (ret == 0) {
+        ret = save_runtime_combo_scalar(ZMK_RUNTIME_COMBO_TIMEOUT_MS_KEY, &affected_count);
+    }
+    if (ret == 0) {
+        ret = save_runtime_combo_scalar(ZMK_RUNTIME_COMBO_SLOW_RELEASE_KEY, &affected_count);
+    }
+    if (ret == 0) {
+        ret = save_runtime_combo_scalar(ZMK_RUNTIME_COMBO_REQUIRE_PRIOR_IDLE_MS_KEY,
+                                        &affected_count);
+    }
+
+    /* Save doesn't change the in-memory values, but rebuilding the decoded
+     * cache here keeps it in sync with the just-persisted settings. */
     zmk_runtime_combo_invalidate_cache();
     if (ret < 0) {
         return ret;
