@@ -111,9 +111,16 @@ static int fill_combo_message(uint32_t index, cormoran_runtime_combo_Combo *mess
     message->has_behavior = true;
     if (combo.behavior.behavior_dev) {
         message->behavior.behavior_id = zmk_behavior_get_local_id(combo.behavior.behavior_dev);
-        message->behavior.param1 = combo.behavior.param1;
-        message->behavior.param2 = combo.behavior.param2;
     }
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_LOCAL_IDS_IN_BINDINGS)
+    else {
+        /* Preserve an unknown behavior ID so the Web UI can display and
+         * replace the binding without losing the rest of the combo. */
+        message->behavior.behavior_id = combo.behavior.local_id;
+    }
+#endif
+    message->behavior.param1 = combo.behavior.param1;
+    message->behavior.param2 = combo.behavior.param2;
 
     return 0;
 }
