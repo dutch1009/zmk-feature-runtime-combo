@@ -290,9 +290,9 @@ static int read_combo_behavior(uint32_t index, struct zmk_behavior_binding *beha
     }
     zmk_behavior_local_id_t behavior_id = value.behavior_value.behavior_id;
     const char *behavior_name = zmk_behavior_find_behavior_name_from_local_id(behavior_id);
-    if (!behavior_name) {
-        return -ENODEV;
-    }
+    /* Keep the stored local ID even if this firmware no longer has the
+     * corresponding behavior. The RPC list can still expose the original
+     * binding so the Web UI can repair it instead of hiding the whole slot. */
     *behavior = (struct zmk_behavior_binding){
         .behavior_dev = behavior_name,
         .param1 = value.behavior_value.param1,
@@ -529,7 +529,11 @@ int zmk_runtime_combo_read_name(uint32_t index, char *name, size_t name_size) {
 static void runtime_combo_cache_rebuild_slot(uint32_t index) {
     struct runtime_combo_cache_entry *entry = &runtime_combo_cache[index];
     struct zmk_runtime_combo_config combo;
-    if (zmk_runtime_combo_read(index, &combo) < 0) {
+    if (zmk_runtime_combo_read(index, &combo) < 0 ||
+        (combo.key_position_len > 0 && !combo.behavior.behavior_dev)) {
+        /* An unresolved behavior is still readable by the RPC layer (its
+         * local ID is preserved), but must not be invoked by the key-event
+         * matcher until the user repairs the binding in Studio. */
         *entry = (struct runtime_combo_cache_entry){.valid = false};
         return;
     }
