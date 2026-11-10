@@ -657,25 +657,60 @@ static int ensure_name_array_size(uint32_t index, bool persist) {
         persist ? ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST : ZMK_CUSTOM_SETTING_WRITE_MODE_MEMORY);
 }
 
+/* An unresolved behavior can still be safely carried through an edit when
+ * the request keeps the exact stored binding. This is important for editing
+ * positions, layers, timeout, enabled state, or deleting a legacy combo whose
+ * behavior device is no longer present in the current firmware. */
+static bool unresolved_behavior_matches_stored(uint32_t index,
+                                               const struct zmk_behavior_binding *behavior) {
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_LOCAL_IDS_IN_BINDINGS)
+    if (!behavior || behavior->local_id == 0 || behavior->local_id == UINT16_MAX) {
+        return false;
+    }
+    struct zmk_custom_setting_value stored;
+    int ret = zmk_custom_setting_read_array_by_key(ZMK_RUNTIME_COMBO_SUBSYSTEM_ID,
+                                                   ZMK_RUNTIME_COMBO_BEHAVIORS_KEY, index,
+                                                   &stored);
+    return ret == 0 && stored.type == ZMK_CUSTOM_SETTING_VALUE_TYPE_BEHAVIOR &&
+           stored.behavior_value.behavior_id == behavior->local_id &&
+           stored.behavior_value.param1 == behavior->param1 &&
+           stored.behavior_value.param2 == behavior->param2;
+#else
+    ARG_UNUSED(index);
+    ARG_UNUSED(behavior);
+    return false;
+#endif
+}
+
 int zmk_runtime_combo_write(uint32_t index, const struct zmk_runtime_combo_config *combo,
                             bool persist) {
     if (!combo || index >= CONFIG_ZMK_RUNTIME_COMBO_MAX_COMBOS) {
         return -EINVAL;
     }
 
-    /* Resolve and validate the behavior binding up front so an invalid binding
-     * fails before any array element is written or grown. */
-    zmk_behavior_local_id_t behavior_id = zmk_behavior_get_local_id(combo->behavior.behavior_dev);
-    if (behavior_id == 0 || behavior_id == UINT16_MAX) {
-        return -ENODEV;
-    }
-    int ret = zmk_behavior_validate_binding(&combo->behavior);
-    if (ret < 0) {
-        return ret;
+    /* Resolve and validate known behaviors before writing. If the behavior is
+     * unknown to this firmware, allow only an unchanged binding that matches
+     * the stored ID and parameters; its BEHAVIOR array element is left intact. */
+    bool preserve_unresolved_behavior = false;
+    if (combo->behavior.behavior_dev) {
+        zmk_behavior_local_id_t behavior_id =
+            zmk_behavior_get_local_id(combo->behavior.behavior_dev);
+        if (behavior_id == 0 || behavior_id == UINT16_MAX) {
+            return -ENODEV;
+        }
+        int ret = zmk_behavior_validate_binding(&combo->behavior);
+        if (ret < 0) {
+            return ret;
+        }
+    } else {
+        preserve_unresolved_behavior = unresolved_behavior_matches_stored(index, &combo->behavior);
+        if (!preserve_unresolved_behavior) {
+            return -ENODEV;
+        }
     }
 
     struct zmk_custom_setting_value value;
-    ret = combo_to_packed(combo, &value);
+    int ret = combo_to_packed(combo, &value);
     if (ret < 0) {
         return ret;
     }
@@ -689,7 +724,9 @@ int zmk_runtime_combo_write(uint32_t index, const struct zmk_runtime_combo_confi
     int write_ret = zmk_custom_setting_write_array_element(
         setting, &value, array_size,
         persist ? ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST : ZMK_CUSTOM_SETTING_WRITE_MODE_MEMORY);
-    int behavior_ret = write_combo_behavior(index, &combo->behavior, persist);
+    int behavior_ret = preserve_unresolved_behavior
+                           ? 0
+                           : write_combo_behavior(index, &combo->behavior, persist);
     int name_ret = ensure_name_array_size(index, persist);
     /* The in-memory value updates even if persisting to flash failed
      * (zmk_custom_setting_write_array_element applies memory_value before
